@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="row">
+    <div class="col-md-4">
+        <div class="card mb-4">
+            <div class="card-header">Add New Device</div>
+            <div class="card-body">
+                <form method="POST">
+                    {{ form.hidden_tag() }}
+                    {{ form.name(class="form-control mb-3", placeholder="Device Name") }}
+                    {{ form.broker(class="form-control mb-3", placeholder="MQTT Broker") }}
+                    {{ form.topic(class="form-control mb-3", placeholder="Topic") }}
+                    {{ form.mqtt_user(class="form-control mb-3", placeholder="MQTT Username") }}
+                    {{ form.mqtt_password(class="form-control mb-3", placeholder="MQTT Password") }}
+                    {{ form.submit(class="btn btn-primary w-100") }}
+                </form>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-md-8">
+        {% for device in devices %}
+        <div class="card mb-4">
+            <div class="card-header d-flex justify-content-between align-items-center">
+                <h5>{{ device.name }}</h5>
+                <span class="badge bg-primary">{{ device.topic }}</span>
+            </div>
+            <div class="card-body">
+                <canvas id="chart-{{ device.id }}" height="150"></canvas>
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+{{ super() }}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    {% for device in devices %}
+    fetchData({{ device.id }});
+    {% endfor %}
+});
+
+function fetchData(deviceId) {
+    fetch(`/data/${deviceId}`)
+        .then(response => response.json())
+        .then(data => {
+            updateChart(deviceId, data);
+            setTimeout(() => fetchData(deviceId), 5000);
+        });
+}
+
+function updateChart(deviceId, data) {
+    const ctx = document.getElementById(`chart-${deviceId}`);
+    const labels = data.map(d => d.timestamp);
+    
+    // Update these lines to match new field names
+    const tempCData = data.map(d => d.temperature_c);
+    const tempFData = data.map(d => d.temperature_f);
+
+    if (!window.charts) window.charts = {};
+    if (window.charts[deviceId]) {
+        window.charts[deviceId].destroy();
+    }
+
+    window.charts[deviceId] = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: labels,
+            datasets: [
+                {
+                    label: 'Temperature °C',
+                    data: tempCData,  // Changed variable
+                    borderColor: 'rgb(255, 99, 132)',  // Red for Celsius
+                    tension: 0.1
+                },
+                {
+                    label: 'Temperature °F',
+                    data: tempFData,  // New dataset
+                    borderColor: 'rgb(75, 192, 192)',  // Teal for Fahrenheit
+                    tension: 0.1
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    title: {
+                        display: true,
+                        text: 'Temperature'
+                    }
+                }
+            }
+        }
+    });
+}
+</script>
+{% endblock %}

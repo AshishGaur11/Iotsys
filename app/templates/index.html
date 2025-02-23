@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="jumbotron text-center">
+    <h1 class="display-4">Welcome to IoT Dashboard</h1>
+    <p class="lead">Monitor and manage your IoT devices in real-time</p>
+    <hr class="my-4">
+    <p>Get started by logging in or registering a new account.</p>
+    <div class="d-grid gap-2 d-sm-flex justify-content-sm-center">
+        <a href="{{ url_for('auth.login') }}" class="btn btn-primary btn-lg">Login</a>
+        <a href="{{ url_for('auth.register') }}" class="btn btn-success btn-lg">Register</a>
+    </div>
+</div>
+{% endblock %}

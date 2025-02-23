@@ -1,0 +1,269 @@
+===== ./run.py =====
+from app import create_app
+
+app = create_app()
+
+if __name__ == '__main__':
+    app.run(debug=True)
+===== ./config.py =====
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    SECRET_KEY = os.environ.get('SECRET_KEY') 
+    SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL') 
+    SQLALCHEMY_TRACK_MODIFICATIONS = False
+===== ./app/mqtt_handler.py =====
+import paho.mqtt.client as mqtt
+from app import db
+from app.models import Device, LiveData
+
+clients = []
+
+def on_message(client, userdata, msg):
+    import json
+    data = json.loads(msg.payload)
+    temp_c = data['tempC']
+    temp_f = data['tempF']
+    device_id = userdata.get("device_id")
+
+    new_data = LiveData(data=f"TempC: {temp_c}, TempF: {temp_f}", device_id=device_id)
+    db.session.add(new_data)
+    db.session.commit()
+
+def create_client(device):
+    client = mqtt.Client()
+    client.username_pw_set(device.mqtt_user, device.mqtt_password)
+    client.user_data_set({"device_id": device.id})
+    client.on_message = on_message
+    client.connect(device.broker, 8883)
+    client.subscribe(device.topic)
+    client.loop_start()
+    clients.append(client)
+
+def add_device_mqtt(device):
+    create_client(device)
+
+# Initialize existing devices on startup
+def initialize_devices():
+    devices = Device.query.all()
+    for device in devices:
+        create_client(device)
+===== ./app/models.py =====
+from datetime import datetime
+from app import db
+
+class User(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
+
+class Device(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(64), nullable=False)
+    broker = db.Column(db.String(256), nullable=False)
+    mqtt_user = db.Column(db.String(64), nullable=False)
+    mqtt_password = db.Column(db.String(64), nullable=False)
+    topic = db.Column(db.String(128), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey('user.id'))
+    live_data = db.relationship('LiveData', backref='device', lazy=True)
+
+class LiveData(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    data = db.Column(db.String(128), nullable=False)
+    device_id = db.Column(db.Integer, db.ForeignKey('device.id'))===== ./app/__init__.py =====
+from flask import Flask
+from flask_sqlalchemy import SQLAlchemy
+from flask_login import LoginManager
+from config import Config
+from app.mqtt_handler import initialize_devices
+
+db = SQLAlchemy()
+login_manager = LoginManager()
+
+def create_app(config_class=Config):
+    app = Flask(__name__)
+    app.config.from_object(config_class)
+    
+    db.init_app(app)
+    login_manager.init_app(app)
+    login_manager.login_view = 'auth.login'
+    
+    from app.routes.auth import auth_bp
+    from app.routes.main import main_bp
+
+    app.register_blueprint(auth_bp)
+    app.register_blueprint(main_bp)
+
+    with app.app_context():
+        initialize_devices()
+
+    return app
+===== ./app/forms.py =====
+from flask_wtf import FlaskForm
+from wtforms import StringField, SubmitField
+from wtforms.validators import DataRequired
+
+class AddDeviceForm(FlaskForm):
+    name = StringField('Device Name', validators=[DataRequired()])
+    broker = StringField('MQTT Broker', validators=[DataRequired()])
+    mqtt_user = StringField('MQTT Username', validators=[DataRequired()])
+    mqtt_password = StringField('MQTT Password', validators=[DataRequired()])
+    topic = StringField('MQTT Topic', validators=[DataRequired()])
+    submit = SubmitField('Add Device')
+===== ./app/templates/home.html =====
+{% extends "base.html" %}
+{% block title %}Home{% endblock %}
+{% block content %}
+<h1>Welcome to the Home Page</h1>
+{% endblock %}
+===== ./app/templates/about.html =====
+===== ./app/templates/base.html =====
+<!-- app/templates/base.html -->
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+  <nav>
+    <!-- Navbar content -->
+  </nav>
+  <div class="container">
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>
+===== ./app/templates/contact.html =====
+===== ./app/templates/login.html =====
+===== ./app/templates/dashboard.html =====
+{% extends "base.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<form method="POST" action="{{ url_for('main.dashboard') }}">
+    {{ form.hidden_tag() }}
+    <p>{{ form.name.label }} {{ form.name(size=20) }}</p>
+    <p>{{ form.broker.label }} {{ form.broker(size=20) }}</p>
+    <p>{{ form.mqtt_user.label }} {{ form.mqtt_user(size=20) }}</p>
+    <p>{{ form.mqtt_password.label }} {{ form.mqtt_password(size=20) }}</p>
+    <p>{{ form.topic.label }} {{ form.topic(size=20) }}</p>
+    <p>{{ form.submit() }}</p>
+</form>
+
+<h2>Your Devices</h2>
+<ul>
+    {% for device in devices %}
+    <li>{{ device.name }} ({{ device.broker }})</li>
+    {% endfor %}
+</ul>
+
+<h2>Live Data</h2>
+<ul>
+    {% for device_id, data in live_data.items() %}
+    <li>
+        <h3>Device {{ device_id }}</h3>
+        <ul>
+            {% for item in data %}
+            <li>{{ item.timestamp }}: {{ item.data }}</li>
+            {% endfor %}
+        </ul>
+    </li>
+    {% endfor %}
+</ul>
+
+{% endblock %}
+===== ./app/templates/services.html =====
+===== ./app/templates/signup.html =====
+===== ./app/routes/auth.py =====
+from flask import Blueprint, render_template, redirect, url_for, flash
+from flask_login import login_user, login_required, logout_user
+
+auth_bp = Blueprint('auth', __name__)
+
+@auth_bp.route('/login')
+def login():
+    return render_template('login.html')
+
+@auth_bp.route('/signup')
+def signup():
+    return render_template('signup.html')
+
+# More routes for login, signup, and logout
+===== ./app/routes/__init__.py =====
+===== ./app/routes/main.py =====
+from flask import Blueprint, render_template
+from flask_login import login_required
+from flask import Blueprint, render_template, redirect, url_for, flash
+from flask_login import login_required, current_user
+from app import db
+from app.models import Device, LiveData
+from app.forms import AddDeviceForm
+from app.mqtt_handler import add_device_mqtt
+
+main_bp = Blueprint('main', __name__)
+
+@main_bp.route('/dashboard', methods=['GET', 'POST'])
+@login_required
+def dashboard():
+    form = AddDeviceForm()
+    if form.validate_on_submit():
+        new_device = Device(
+            name=form.name.data, 
+            broker=form.broker.data,
+            mqtt_user=form.mqtt_user.data,
+            mqtt_password=form.mqtt_password.data,
+            topic=form.topic.data,
+            user_id=current_user.id
+        )
+        db.session.add(new_device)
+        db.session.commit()
+        flash('Device added successfully!', 'success')
+        add_device_mqtt(new_device)  # Add device to MQTT handler
+        return redirect(url_for('main.dashboard'))
+    
+    devices = Device.query.filter_by(user_id=current_user.id).all()
+    live_data = {device.id: LiveData.query.filter_by(device_id=device.id).all() for device in devices}
+    
+    return render_template('dashboard.html', form=form, devices=devices, live_data=live_data)
+
+
+main_bp = Blueprint('main', __name__)
+
+@main_bp.route('/')
+def home():
+    return render_template('home.html')
+
+@main_bp.route('/services')
+def services():
+    return render_template('services.html')
+
+@main_bp.route('/about')
+def about():
+    return render_template('about.html')
+
+@main_bp.route('/contact')
+def contact():
+    return render_template('contact.html')
+
+@main_bp.route('/dashboard')
+@login_required
+def dashboard():
+    return render_template('dashboard.html')
+
+// MQTT Server Parameters
+const char* mqttClientId = "ashish101";
+const char* mqttBroker = "2fc3e72dc29144f19a2ba5fdfcb311be.s1.eu.hivemq.cloud";
+const char* mqttUser = "ashish";
+const char* mqttPassword = "Ashish@1";
+
+const char* mqttTopic = "temp/data";
+
+
