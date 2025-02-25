@@ -27,18 +27,34 @@ def on_connect(client, userdata, flags, rc):
 #     except Exception as e:
 #         current_app.logger.error(f"Error processing MQTT message: {str(e)}")
 
+# def create_mqtt_client(device):
+#     client = mqtt.Client()
+#     client.username_pw_set(device.mqtt_user, device.mqtt_password)
+#     client.tls_set(ca_certs=current_app.config['MQTT_TLS_CA_CERTS'], 
+#                   cert_reqs=ssl.CERT_REQUIRED)
+#     client.user_data_set({'device_id': device.id, 'topic': device.topic})
+#     client.on_connect = on_connect
+#     client.on_message = on_message
+#     client.connect(device.broker, 8883, 60)
+#     client.loop_start()
+#     clients[device.id] = client
 def create_mqtt_client(device):
     client = mqtt.Client()
     client.username_pw_set(device.mqtt_user, device.mqtt_password)
-    client.tls_set(ca_certs=current_app.config['MQTT_TLS_CA_CERTS'], 
-                  cert_reqs=ssl.CERT_REQUIRED)
-    client.user_data_set({'device_id': device.id, 'topic': device.topic})
-    client.on_connect = on_connect
-    client.on_message = on_message
-    client.connect(device.broker, 8883, 60)
+    
+    # Secure connection handling
+    try:
+        client.tls_set(
+            ca_certs=current_app.config['MQTT_TLS_CA_CERTS'],
+            cert_reqs=ssl.CERT_REQUIRED if not current_app.config['MQTT_TLS_INSECURE'] else ssl.CERT_NONE
+        )
+        client.connect(device.broker, 8883, 60)
+    except Exception as e:
+        current_app.logger.error(f"MQTT connection failed: {str(e)}")
+        return
+    
     client.loop_start()
     clients[device.id] = client
-
 # def initialize_mqtt_clients():
 #     from app.models import Device
 #     for device in Device.query.all():
